@@ -422,6 +422,58 @@ def _upsert_reconciliation_transaction(
     return transaction
 
 
+def _single_file_financial_dimensions(record):
+    """Read optional financial dimensions from a single-file source row."""
+    source_values = record.get("source_values") or {}
+    values = {
+        str(key or "").strip().lower().replace(" ", "_"): value
+        for key, value in source_values.items()
+    }
+
+    transaction_type = next(
+        (
+            str(values[key]).strip().lower()
+            for key in ("type", "transaction_type", "category")
+            if values.get(key)
+        ),
+        "reconciliation",
+    )
+    amount = float(record.get("amount") or 0)
+    for key, inferred_type in (
+        ("revenue", "revenue"),
+        ("income", "income"),
+        ("sales", "sale"),
+        ("expense", "expense"),
+        ("expenses", "expense"),
+        ("purchase", "purchase"),
+        ("payout", "payout"),
+    ):
+        raw_value = values.get(key)
+        if raw_value not in (None, ""):
+            try:
+                dimension_value = float(str(raw_value).replace(",", "").strip())
+            except (TypeError, ValueError):
+                continue
+            if dimension_value != 0:
+                transaction_type = inferred_type
+                amount = dimension_value
+                break
+
+    def numeric_value(*keys):
+        for key in keys:
+            raw_value = values.get(key)
+            if raw_value not in (None, ""):
+                try:
+                    return float(str(raw_value).replace(",", "").strip())
+                except (TypeError, ValueError):
+                    continue
+        return 0.0
+
+    return transaction_type, amount, numeric_value("fee", "fees", "processing_fee"), numeric_value(
+        "refund_amount", "refund", "refunds"
+    )
+
+
 def _upsert_reconciliation_result(db, run_id, transaction_id, status, variance, reason):
     result = (
         db.query(ReconciliationResult)
@@ -1046,6 +1098,11 @@ async def single_file_reconciliation(
             existing=transaction_map.get(record["reference"]),
             lookup_if_missing=False,
         )
+        financial_type, financial_amount, fee, refund_amount = _single_file_financial_dimensions(record)
+        transaction.type = financial_type
+        transaction.amount = financial_amount
+        transaction.fee = fee
+        transaction.refund_amount = refund_amount
         transaction_map[record["reference"]] = transaction
         single_file_transactions.append(transaction)
         db.add(ReconciliationResult(

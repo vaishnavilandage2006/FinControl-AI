@@ -5752,6 +5752,10 @@ function ScenarioSimulator() {
   const currentRevenue = Number(dashboard?.revenue || 0);
   const currentExpenses = Number(dashboard?.expenses || 0);
   const currentNetProfit = Number(dashboard?.net_profit || 0);
+  const financial = dashboard?.financial || {};
+  const revenueAvailable = financial.revenue?.available !== false;
+  const expensesAvailable = financial.expenses?.available !== false;
+  const netProfitAvailable = financial.net_profit?.available !== false;
   const projectedProfit = scenario?.projected_profit;
   const profitImpact = scenario
     ? Number(projectedProfit) - currentNetProfit
@@ -5801,9 +5805,9 @@ function ScenarioSimulator() {
       <div className="panel">
         <h2>Current position</h2>
         <div className="grid" style={{ marginTop: "16px" }}>
-          <div className="card"><small>Current Revenue</small><strong>{money(currentRevenue)}</strong></div>
-          <div className="card"><small>Current Expenses</small><strong>{money(currentExpenses)}</strong></div>
-          <div className="card"><small>Current Net Profit</small><strong>{money(currentNetProfit)}</strong></div>
+          <div className="card"><small>Current Revenue</small><strong>{revenueAvailable ? money(currentRevenue) : "Unavailable"}</strong></div>
+          <div className="card"><small>Current Expenses</small><strong>{expensesAvailable ? money(currentExpenses) : "Unavailable"}</strong></div>
+          <div className="card"><small>Current Net Profit</small><strong>{netProfitAvailable ? money(currentNetProfit) : "Unavailable"}</strong></div>
         </div>
       </div>
 
@@ -5812,16 +5816,16 @@ function ScenarioSimulator() {
           <h2>Projected position</h2>
           <div className="grid" style={{ marginTop: "16px" }}>
             <div className="card"><small>Revenue Change</small><strong>{Number(revenueChange)}%</strong></div>
-            <div className="card"><small>Projected Revenue</small><strong>{money(scenario.projected_revenue)}</strong></div>
-            <div className="card"><small>Projected Expenses</small><strong>{money(scenario.projected_expenses)}</strong></div>
-            <div className="card"><small>Projected Net Profit</small><strong>{money(projectedProfit)}</strong></div>
-            <div className="card"><small>Profit Impact</small><strong style={{ color: Number(profitImpact) >= 0 ? "#18794e" : "#b42318" }}>{money(Number(profitImpact))}</strong></div>
-            <div className="card"><small>Estimated Cash Impact</small><strong style={{ color: Number(scenario.cash_impact) >= 0 ? "#18794e" : "#b42318" }}>{money(scenario.cash_impact)}</strong></div>
+            <div className="card"><small>Projected Revenue</small><strong>{scenario.available === false ? "Unavailable" : money(scenario.projected_revenue)}</strong></div>
+            <div className="card"><small>Projected Expenses</small><strong>{scenario.available === false ? "Unavailable" : money(scenario.projected_expenses)}</strong></div>
+            <div className="card"><small>Projected Net Profit</small><strong>{scenario.available === false ? "Unavailable" : money(projectedProfit)}</strong></div>
+            <div className="card"><small>Profit Impact</small><strong style={{ color: Number(profitImpact) >= 0 ? "#18794e" : "#b42318" }}>{scenario.available === false ? "Unavailable" : money(Number(profitImpact))}</strong></div>
+            <div className="card"><small>Estimated Cash Impact</small><strong style={{ color: Number(scenario.cash_impact) >= 0 ? "#18794e" : "#b42318" }}>{scenario.available === false ? "Unavailable" : money(scenario.cash_impact)}</strong></div>
           </div>
           <div style={{ marginTop: "18px", padding: "16px", background: "#f6f9fd", border: "1px solid #e1e8f1", borderRadius: "8px" }}>
             <strong>Controller Interpretation</strong>
             <p style={{ margin: "8px 0 0", lineHeight: 1.6 }}>
-              {scenario.risk_impact === "HIGH" ? "The modeled position creates a high financial risk and requires controller attention." : "The modeled position remains within the current operating range."}
+              {scenario.available === false ? scenario.note || "Scenario projections are unavailable for the current data." : scenario.risk_impact === "HIGH" ? "The modeled position creates a high financial risk and requires controller attention." : "The modeled position remains within the current operating range."}
             </p>
             <strong style={{ display: "block", marginTop: "14px" }}>Recommended Action</strong>
             <p style={{ margin: "8px 0 0", lineHeight: 1.6 }}>
@@ -5835,6 +5839,50 @@ function ScenarioSimulator() {
       ) : (
         <div className="panel"><div className="state">Run a scenario to compare the projected position.</div></div>
       )}
+    </>
+  );
+}
+
+function ForecastingPage() {
+  const [forecast, setForecast] = useState<any>(null);
+  const [error, setError] = useState("");
+
+  async function loadForecast() {
+    setError("");
+    try {
+      setForecast(await apiGet("/forecast"));
+    } catch (err) {
+      console.error(err);
+      setError("Unable to load forecast data.");
+    }
+  }
+
+  useEffect(() => {
+    loadForecast();
+  }, []);
+
+  if (error) return <div className="state"><p>{error}</p><button type="button" onClick={loadForecast}>Retry</button></div>;
+  if (!forecast) return <div className="state">Loading forecast...</div>;
+
+  const series = forecast.series || {};
+  const money = (value: unknown) => value === null || value === undefined ? "Unavailable" : currency(Number(value));
+  return (
+    <>
+      <header>
+        <div><h1>Forecasting</h1><p style={{ marginTop: "4px", opacity: 0.7 }}>Deterministic projection from current-run dated transactions.</p></div>
+        <span>{forecast.run_id ? `Run ${forecast.run_id}` : "Current data"}</span>
+      </header>
+      <div className="panel">
+        {forecast.available === false ? <div className="state">{forecast.message || "Forecast unavailable for the current data."}</div> : (
+          <div className="grid">
+            {["revenue", "expenses", "refunds", "fees"].map((key) => {
+              const item = series[key];
+              return <div className="card" key={key}><small>{key}</small><strong>{item?.available ? money(item.forecast_total) : "Unavailable"}</strong><span style={{ display: "block", marginTop: "8px", fontSize: "13px", opacity: 0.65 }}>{item?.available ? `${item.historical_days_observed} days observed` : item?.reason || "No series data"}</span></div>;
+            })}
+          </div>
+        )}
+        {forecast.method ? <p style={{ marginTop: "16px", opacity: 0.65 }}>{forecast.method}</p> : null}
+      </div>
     </>
   );
 }
@@ -8146,7 +8194,6 @@ const pages = [
   "Forensic Analysis",
   "Alerts",
   "Policies & Controls",
-  "Forecasting",
   "CFO Reports",
   "Security Center",
   "Settings",
@@ -8288,6 +8335,13 @@ export default function App() {
           ) : (
             <Navigate to="/login" replace />
           )
+        }
+      />
+
+      <Route
+        path="/forecasting"
+        element={
+          isLoggedIn ? <Layout><ForecastingPage /></Layout> : <Navigate to="/login" replace />
         }
       />
 

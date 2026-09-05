@@ -149,6 +149,42 @@ def test_forecast_is_deterministic(client):
     assert first["revenue_forecast"] == second["revenue_forecast"]
 
 
+def test_single_file_reconciliation_dimensions_feed_forecast_and_scenario(client):
+    test_client, _ = client
+    rows = ["transaction_id,date,amount,type,status,settlement_amount,fee,refund_amount"]
+    for index in range(35):
+        rows.append(
+            f"REV-{index},2026-01-{(index % 9) + 1:02d},1000,revenue,completed,1000,10,5"
+        )
+    for index in range(35):
+        rows.append(
+            f"EXP-{index},2026-01-{(index % 9) + 1:02d},400,expense,completed,400,0,0"
+        )
+
+    response = test_client.post(
+        "/api/reconciliation/single-file",
+        files={"file": ("financial-dimensions.csv", ("\n".join(rows) + "\n").encode(), "text/csv")},
+        headers=auth_headers(test_client),
+    )
+    assert response.status_code == 200
+
+    forecast = test_client.get("/api/forecast", headers=auth_headers(test_client)).json()
+    assert forecast["available"] is True
+    assert forecast["series"]["revenue"]["available"] is True
+    assert forecast["series"]["expenses"]["available"] is True
+    assert forecast["series"]["refunds"]["available"] is True
+    assert forecast["series"]["fees"]["available"] is True
+
+    scenario = test_client.post(
+        "/api/scenarios",
+        json={"revenue_change": 10},
+        headers=auth_headers(test_client),
+    ).json()
+    assert scenario["available"] is True
+    assert scenario["projected_revenue"] == 38500.0
+    assert scenario["projected_expenses"] == 14000.0
+
+
 def test_scenario_applies_volume_change_deterministically(client):
     test_client, session_factory = client
     db = session_factory()
